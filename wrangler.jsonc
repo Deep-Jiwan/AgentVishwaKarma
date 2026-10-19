@@ -3,7 +3,7 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
-  "vars": { "ADMIN_NAME": "Deep Jiwan" },
+  "vars": { "ADMIN_NAME": "Deep Jiwan", "BRAND_NAME": "Deep Jiwan" },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

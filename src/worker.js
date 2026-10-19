@@ -289,6 +289,8 @@ async function handleApi(request, env, url) {
     if (origin && origin !== url.origin) throw new HttpError(403, 'Cross-site request blocked');
   }
 
+  if (path === '/api/config' && method === 'GET') return json({ brand: (env.BRAND_NAME || 'Calendar').slice(0, 40) });
+
   requireConfig(env);
   await ensureSchema(env.DB);
 

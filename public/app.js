@@ -1,4 +1,4 @@
-// Deep Jiwan's calendar - front end. No framework, no build step.
+// Calendar front end. No framework, no build step.
 // All text from the server goes in with textContent (via h()), never innerHTML.
 
 const COLORS = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#F0E442', '#5B6770'];
@@ -97,6 +97,7 @@ const state = {
   view: window.innerWidth < 820 ? 'agenda' : 'month',
   anchor: localToday(),
   tab: 'all',
+  brand: 'Calendar',
   q: '',
 };
 const root = document.getElementById('root');
@@ -242,7 +243,7 @@ function showLogin(message = '') {
     h('main', { class: 'login' },
       h('div', { class: 'login-card' },
         h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()),
-        h('h1', null, 'Deep Jiwan'),
+        h('h1', null, state.brand),
         h('div', { class: 'muted' }, "Calendar. Enter your password. This device will stay signed in for 30 days."),
         form))
   );
@@ -308,7 +309,7 @@ function renderTopbar() {
 function renderSide() {
   const roleLabel = { admin: 'Admin', editor: 'Editor', guest: 'View only' }[state.me.role];
   shell.side.replaceChildren(
-    h('div', { class: 'brand' }, h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()), 'Deep Jiwan'),
+    h('div', { class: 'brand' }, h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()), state.brand),
     miniCalendar(),
     state.me.role === 'admin'
       ? h('section', { class: 'side-actions' }, h('h3', { class: 'side-title' }, 'Admin'),
@@ -706,6 +707,10 @@ async function start() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.me && !modals.length) refresh({ quiet: true }); });
 
 (async () => {
+  try {
+    const cfg = await fetch('/api/config').then((r) => r.json());
+    if (cfg.brand) { state.brand = cfg.brand; document.title = `${cfg.brand} - Calendar`; }
+  } catch { /* keep the default name */ }
   try {
     await api('/state').then((d) => { state.me = d.me; });
     await start();

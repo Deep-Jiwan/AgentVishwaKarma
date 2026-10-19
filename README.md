@@ -31,6 +31,17 @@ The D1 database id is already in `wrangler.jsonc`. Deploying again later is just
 
 Changing `SESSION_SECRET` signs everyone out **and** invalidates every editor/guest password, so only do that on purpose.
 
+## Two deployments from the same code
+
+| | Personal | Team |
+|---|---|---|
+| Config | `wrangler.jsonc` | `wrangler.technical.jsonc` |
+| Worker / link | `deepjiwan` | `technical` |
+| Database | `vishwakarma-calendar` | `technical-calendar` |
+| Deploy | `npm run deploy` | `npm run deploy:technical` |
+
+Each has its own database, admin password and session secret, so nothing is shared. The name shown in the app comes from `BRAND_NAME`, the admin's display name from `ADMIN_NAME`. For a new copy, make a new config file, create a D1 database, deploy, then set its two secrets.
+
 ## Run locally
 
 ```bash

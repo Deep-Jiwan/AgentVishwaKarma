@@ -1,0 +1,20 @@
+{
+  // Team calendar: same code as the personal one, but its own Worker, database and passwords.
+  "name": "technical",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "vars": { "ADMIN_NAME": "Admin", "BRAND_NAME": "Pentagon Technical" },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "technical-calendar",
+      "database_id": "179a4723-ee7a-4412-96eb-e4b9b377c4da"
+    }
+  ]
+}
