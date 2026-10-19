@@ -96,7 +96,7 @@ const state = {
   events: [],
   view: window.innerWidth < 820 ? 'agenda' : 'month',
   anchor: localToday(),
-  hidden: new Set(),
+  tab: 'all',
   q: '',
 };
 const root = document.getElementById('root');
@@ -109,7 +109,7 @@ const editableProjects = () => state.projects.filter((p) => p.level === 'edit');
 function visibleEvents() {
   const q = state.q.trim().toLowerCase();
   return state.events.filter((e) => {
-    if (state.hidden.has(e.project_id)) return false;
+    if (state.tab !== 'all' && e.project_id !== state.tab) return false;
     if (!q) return true;
     return (e.title + ' ' + e.notes + ' ' + (projectOf(e.project_id)?.name || '')).toLowerCase().includes(q);
   });
@@ -170,6 +170,7 @@ async function refresh({ quiet = false } = {}) {
     state.me = data.me;
     state.projects = data.projects;
     state.events = data.events;
+    if (state.tab !== 'all' && !projectOf(state.tab)) state.tab = 'all';
     renderAll();
   } catch (err) {
     if (!quiet) toast(err.message);
@@ -255,9 +256,9 @@ function logoSvg() {
   svg.setAttribute('width', '26');
   svg.setAttribute('height', '26');
   const r = document.createElementNS(ns, 'rect');
-  for (const [k, v] of Object.entries({ x: 7, y: 9, width: 18, height: 16, rx: 3, fill: 'none', stroke: '#fff', 'stroke-width': 2 })) r.setAttribute(k, v);
+  for (const [k, v] of Object.entries({ x: 7, y: 9, width: 18, height: 16, rx: 3, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 })) r.setAttribute(k, v);
   const p = document.createElementNS(ns, 'path');
-  for (const [k, v] of Object.entries({ d: 'M7 14h18M12 6v5M20 6v5', stroke: '#fff', 'stroke-width': 2, 'stroke-linecap': 'round' })) p.setAttribute(k, v);
+  for (const [k, v] of Object.entries({ d: 'M7 14h18M12 6v5M20 6v5', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' })) p.setAttribute(k, v);
   svg.append(r, p);
   return svg;
 }
@@ -269,7 +270,7 @@ function buildShell() {
   shell.seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'View' },
     ...[['month', 'Month'], ['week', 'Week'], ['agenda', 'Agenda']].map(([v, label]) =>
       h('button', { 'data-view': v, onclick: () => { state.view = v; renderAll(); } }, label)));
-  shell.newBtn = h('button', { class: 'btn primary', onclick: () => openEventModal(null, { date: state.view === 'month' ? localToday() : state.anchor }) }, '+ New task');
+  shell.newBtn = h('button', { class: 'btn primary', onclick: () => openEventModal(null, { date: state.view === 'month' ? localToday() : state.anchor, projectId: state.tab }) }, '+ New task');
   const search = h('input', { class: 'input search', type: 'search', placeholder: 'Search…', 'aria-label': 'Search tasks', oninput: (ev) => { state.q = ev.target.value; renderBody(); renderPanel(); } });
   const step = (dir) => { state.anchor = state.view === 'month' ? addMonths(state.anchor, dir) : addDays(state.anchor, dir * (state.view === 'week' ? 7 : 30)); renderAll(); };
   shell.topbar = h('div', { class: 'card topbar' },
@@ -277,15 +278,17 @@ function buildShell() {
     h('button', { class: 'btn icon', 'aria-label': 'Next', onclick: () => step(1) }, '›'),
     h('button', { class: 'btn', onclick: () => { state.anchor = localToday(); renderAll(); } }, 'Today'),
     shell.title, search, shell.seg, shell.newBtn);
+  shell.tabs = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Projects' });
   shell.body = h('div', { class: 'card body' });
   shell.side = h('aside', { class: 'card sidebar' });
   shell.panel = h('aside', { class: 'card panel' });
-  root.replaceChildren(h('div', { class: 'app' }, shell.side, h('main', { class: 'main' }, shell.topbar, shell.body), shell.panel));
+  root.replaceChildren(h('div', { class: 'app' }, shell.side, h('main', { class: 'main' }, shell.topbar, shell.tabs, shell.body), shell.panel));
 }
 
 function renderAll() {
   if (!shell.body?.isConnected) buildShell();
   renderTopbar();
+  renderTabs();
   renderSide();
   renderBody();
   renderPanel();
@@ -307,14 +310,14 @@ function renderSide() {
   shell.side.replaceChildren(
     h('div', { class: 'brand' }, h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()), 'Vishwakarma'),
     miniCalendar(),
-    h('section', null,
-      h('h3', { class: 'side-title' }, 'Projects', state.me.role === 'admin' ? h('button', { class: 'btn ghost', onclick: () => openManage('projects') }, 'Manage') : null),
-      h('div', { class: 'proj-list' },
-        state.projects.length ? state.projects.map(projectToggle) : h('div', { class: 'muted' }, state.me.role === 'admin' ? 'No projects yet. Use Manage to add one.' : 'No projects shared with you yet.'))),
+    state.me.role === 'admin'
+      ? h('section', { class: 'side-actions' }, h('h3', { class: 'side-title' }, 'Admin'),
+          h('button', { class: 'btn', onclick: () => openManage('projects') }, 'Manage projects'),
+          h('button', { class: 'btn', onclick: () => openManage('people') }, 'Manage people'))
+      : null,
     h('div', { class: 'who' },
       h('div', null, h('div', null, state.me.name), h('span', { class: 'badge' }, roleLabel)),
       h('div', null,
-        state.me.role === 'admin' ? h('button', { class: 'btn ghost', onclick: () => openManage('people') }, 'People') : null,
         h('button', { class: 'btn ghost', onclick: signOut }, 'Sign out')))
   );
 }
@@ -324,10 +327,12 @@ async function signOut() {
   showLogin();
 }
 
-function projectToggle(p) {
-  const on = !state.hidden.has(p.id);
-  return h('button', { class: 'proj', 'aria-pressed': String(on), title: on ? 'Click to hide' : 'Click to show', onclick: () => { on ? state.hidden.add(p.id) : state.hidden.delete(p.id); renderSide(); renderBody(); renderPanel(); } },
-    swatch(p), h('span', { class: 'name' }, p.name), p.level === 'view' && state.me.role !== 'guest' ? h('span', { class: 'tag' }, 'view only') : null);
+function renderTabs() {
+  const tab = (id, label, p) => h('button', {
+    class: 'ptab', role: 'tab', 'aria-selected': String(state.tab === id),
+    onclick: () => { state.tab = id; renderTabs(); renderSide(); renderBody(); renderPanel(); },
+  }, p ? swatch(p, 14) : null, label, p && p.level === 'view' && state.me.role !== 'guest' ? h('span', { class: 'tag' }, 'view only') : null);
+  shell.tabs.replaceChildren(tab('all', 'All'), ...state.projects.map((p) => tab(p.id, p.name, p)));
 }
 
 function miniCalendar() {
@@ -429,7 +434,7 @@ function monthView(list) {
     if (i >= 35 && d.slice(0, 7) !== first.slice(0, 7)) break;
     const evs = eventsOn(list, d);
     const cell = h('div', { class: ['cell', d.slice(0, 7) !== first.slice(0, 7) && 'out', d === today && 'today'].filter(Boolean).join(' ') },
-      h('button', { class: 'num', 'aria-label': 'Add task on ' + fmt.dayLong(d), onclick: () => editableProjects().length && openEventModal(null, { date: d }) }, String(Number(d.slice(8)))),
+      h('button', { class: 'num', 'aria-label': 'Add task on ' + fmt.dayLong(d), onclick: () => editableProjects().length && openEventModal(null, { date: d, projectId: state.tab }) }, String(Number(d.slice(8)))),
       evs.slice(0, 3).map((e) => chip(e, d)),
       evs.length > 3 ? h('button', { class: 'more', onclick: () => { state.view = 'week'; state.anchor = d; renderAll(); } }, `+${evs.length - 3} more`) : null);
     makeDropTarget(cell, d);
@@ -478,9 +483,10 @@ function agendaView(list) {
 
 function itemButton(e, showProject = false) {
   const p = projectOf(e.project_id) || { color: '#5B6770', pattern: 'solid', name: '' };
-  return h('button', { class: 'item', style: { '--c': p.color }, onclick: () => openEventModal(e) },
-    h('div', { class: 'top' }, swatch(p, 14), isOngoing(e) ? h('span', { class: 'live-dot', 'aria-label': 'Happening now' }) : null, h('span', null, e.title)),
-    h('div', { class: 'sub' }, [showProject ? p.name + ' · ' : '', whenText(e), e.status === 'in_progress' ? ' · In progress' : e.status === 'done' ? ' · Done' : ''].join('')));
+  const sub = [showProject ? p.name + ' · ' : '', whenText(e), e.status === 'in_progress' ? ' · In progress' : e.status === 'done' ? ' · Done' : ''].join('');
+  return h('button', { class: 'item', style: { '--c': p.color, 'background-image': patternBg(p.pattern, p.color, 0.5) }, onclick: () => openEventModal(e) },
+    h('div', { class: 'top' }, isOngoing(e) ? h('span', { class: 'live-dot', 'aria-label': 'Happening now' }) : null, h('span', { class: 'lbl' }, e.title)),
+    h('span', { class: 'sub lbl' }, sub));
 }
 
 function renderPanel() {
@@ -498,10 +504,10 @@ function renderPanel() {
 
 // ---------- task modal ----------
 
-function openEventModal(e, { date } = {}) {
+function openEventModal(e, { date, projectId } = {}) {
   const editable = e ? canEdit(e) : true;
   if (!e && !editableProjects().length) return;
-  const p0 = e ? projectOf(e.project_id) : editableProjects()[0];
+  const p0 = e ? projectOf(e.project_id) : editableProjects().find((p) => p.id === projectId) || editableProjects()[0];
   openModal((m) => {
     const err = h('div', { class: 'error', role: 'alert' });
     const f = {
@@ -690,7 +696,7 @@ function userCard(u, redraw) {
 
 async function start() {
   state.anchor = localToday();
-  state.hidden.clear();
+  state.tab = 'all';
   state.q = '';
   shell.body = null;
   await refresh();
