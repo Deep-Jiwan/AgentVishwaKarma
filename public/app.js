@@ -1,4 +1,4 @@
-// Vishwakarma Calendar - front end. No framework, no build step.
+// Deep Jiwan's calendar - front end. No framework, no build step.
 // All text from the server goes in with textContent (via h()), never innerHTML.
 
 const COLORS = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#F0E442', '#5B6770'];
@@ -242,8 +242,8 @@ function showLogin(message = '') {
     h('main', { class: 'login' },
       h('div', { class: 'login-card' },
         h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()),
-        h('h1', null, 'Vishwakarma Calendar'),
-        h('div', { class: 'muted' }, "Enter your password. This device will stay signed in for 30 days."),
+        h('h1', null, 'Deep Jiwan'),
+        h('div', { class: 'muted' }, "Calendar. Enter your password. This device will stay signed in for 30 days."),
         form))
   );
   input.focus();
@@ -308,7 +308,7 @@ function renderTopbar() {
 function renderSide() {
   const roleLabel = { admin: 'Admin', editor: 'Editor', guest: 'View only' }[state.me.role];
   shell.side.replaceChildren(
-    h('div', { class: 'brand' }, h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()), 'Vishwakarma'),
+    h('div', { class: 'brand' }, h('div', { class: 'logo', 'aria-hidden': 'true' }, logoSvg()), 'Deep Jiwan'),
     miniCalendar(),
     state.me.role === 'admin'
       ? h('section', { class: 'side-actions' }, h('h3', { class: 'side-title' }, 'Admin'),

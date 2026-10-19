@@ -1,4 +1,4 @@
-# Vishwakarma Calendar
+# Deep Jiwan - Calendar
 
 A small private calendar for assigning and tracking work. One Cloudflare Worker + D1 database, no build step.
 
