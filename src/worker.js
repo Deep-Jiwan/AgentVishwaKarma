@@ -1,26 +1,15 @@
 import { SCHEMA } from './schema.js';
+import { handleMcp } from './mcp.js';
+import {
+  HttpError, bad, json, readJson, hmac, safeEqual, randomToken, generatePassword,
+  cleanText, cleanEvent, cleanProject, shiftDate,
+} from './core.js';
 
 const COOKIE = 'vk_session';
 const SESSION_SECONDS = 30 * 24 * 3600;
 const MIN_PASSWORD = 15;
 const MAX_FAILS = 8; // wrong passwords per IP per window
 const FAIL_WINDOW_MS = 15 * 60 * 1000;
-
-// Colour-blind-safe palette (Okabe-Ito based). Each project also gets a pattern.
-export const COLORS = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#F0E442', '#5B6770'];
-export const PATTERNS = ['solid', 'diagonal', 'backdiagonal', 'dots', 'grid', 'horizontal', 'checks', 'zigzag'];
-const STATUSES = ['planned', 'in_progress', 'done'];
-const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; // 56 chars, no look-alikes
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-const enc = new TextEncoder();
-const bad = (msg) => new HttpError(400, msg);
 
 let schemaReady = null;
 function ensureSchema(db) {
@@ -31,115 +20,48 @@ function ensureSchema(db) {
   return schemaReady;
 }
 
-function json(body, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-      ...extraHeaders,
-    },
-  });
-}
+// ---------- sign-in (shared by the website and MCP) ----------
 
-async function readJson(request) {
-  if (!(request.headers.get('content-type') || '').includes('application/json')) throw bad('Expected JSON');
-  try {
-    const body = await request.json();
-    if (body && typeof body === 'object' && !Array.isArray(body)) return body;
-  } catch {
-    // fall through
-  }
-  throw bad('Invalid JSON');
-}
-
-// ---------- crypto helpers ----------
-
-async function hmac(secret, message) {
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(message)));
-  return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function safeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-function randomToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function generatePassword(length = 20) {
-  const out = [];
-  while (out.length < length) {
-    for (const b of crypto.getRandomValues(new Uint8Array(length * 2))) {
-      if (b < 224 && out.length < length) out.push(PASSWORD_ALPHABET[b % 56]); // 224 = 56 * 4, no modulo bias
-    }
-  }
-  return out.join('');
-}
-
-// ---------- validation ----------
-
-function isDate(s) {
-  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const d = new Date(s + 'T00:00:00Z');
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
-}
-const isTime = (s) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
-
-function cleanText(v, field, max, { required = false } = {}) {
-  if (v == null) v = '';
-  if (typeof v !== 'string') throw bad(`${field} must be text`);
-  v = v.trim();
-  if (required && !v) throw bad(`${field} is required`);
-  if (v.length > max) throw bad(`${field} is too long (max ${max})`);
-  return v;
-}
-
-function cleanEvent(input) {
-  const e = {
-    project_id: Number(input.project_id),
-    title: cleanText(input.title, 'Title', 120, { required: true }),
-    notes: cleanText(input.notes, 'Notes', 2000),
-    start_date: input.start_date,
-    end_date: input.end_date,
-    start_time: input.start_time || null,
-    end_time: input.end_time || null,
-    status: input.status || 'planned',
-  };
-  if (!Number.isInteger(e.project_id)) throw bad('Pick a project');
-  if (!isDate(e.start_date) || !isDate(e.end_date)) throw bad('Dates must look like 2026-10-19');
-  if (e.end_date < e.start_date) throw bad('End date is before the start date');
-  if ((e.start_time == null) !== (e.end_time == null)) throw bad('Add both a start and end time, or neither');
-  if (e.start_time != null) {
-    if (!isTime(e.start_time) || !isTime(e.end_time)) throw bad('Times must look like 09:30');
-    if (e.start_date === e.end_date && e.end_time <= e.start_time) throw bad('End time must be after the start time');
-  }
-  if (!STATUSES.includes(e.status)) throw bad('Unknown status');
-  return e;
-}
-
-function cleanProject(input) {
-  const p = {
-    name: cleanText(input.name, 'Name', 40, { required: true }),
-    color: input.color,
-    pattern: input.pattern,
-  };
-  if (!COLORS.includes(p.color)) throw bad('Pick one of the listed colours');
-  if (!PATTERNS.includes(p.pattern)) throw bad('Pick one of the listed patterns');
-  return p;
-}
-
-// ---------- auth & access ----------
-
-function requireConfig(env) {
+export function requireConfig(env) {
   if (!env.ADMIN_PASSWORD || !env.SESSION_SECRET) throw new HttpError(500, 'Server is not set up yet (missing ADMIN_PASSWORD or SESSION_SECRET).');
+}
+
+export async function checkLoginRate(env, request) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM login_fails WHERE ip = ? AND ts > ?').bind(ip, Date.now() - FAIL_WINDOW_MS).first();
+  if (recent.n >= MAX_FAILS) throw new HttpError(429, 'Too many wrong attempts. Try again in 15 minutes.');
+  return ip;
+}
+
+export async function recordLoginFail(env, ip) {
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO login_fails (ip, ts) VALUES (?, ?)').bind(ip, now),
+    env.DB.prepare('DELETE FROM login_fails WHERE ts < ?').bind(now - 24 * 3600 * 1000),
+  ]);
+}
+
+// Password -> user (or null). The password itself is never stored, only a keyed hash.
+export async function userFromPassword(env, password) {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD || password.length > 200) {
+    throw bad(`Passwords are at least ${MIN_PASSWORD} characters.`);
+  }
+  const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
+  const adminKey = await hmac(env.SESSION_SECRET, 'pw:' + env.ADMIN_PASSWORD);
+  if (!safeEqual(key, adminKey)) {
+    return env.DB.prepare('SELECT id, name, role FROM users WHERE pw_key = ? AND role != ?').bind(key, 'admin').first();
+  }
+  const adminName = (env.ADMIN_NAME || 'Admin').slice(0, 40);
+  const user = await env.DB.prepare("SELECT id, name, role FROM users WHERE role = 'admin' LIMIT 1").first();
+  if (!user) {
+    const r = await env.DB.prepare("INSERT INTO users (name, role, pw_key) VALUES (?, 'admin', '__admin__')").bind(adminName).run();
+    return { id: r.meta.last_row_id, name: adminName, role: 'admin' };
+  }
+  if (user.name !== adminName) {
+    await env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(adminName, user.id).run();
+    user.name = adminName;
+  }
+  return user;
 }
 
 function readCookie(request, name) {
@@ -162,6 +84,31 @@ async function authenticate(request, env) {
   )
     .bind(tokenHash, Math.floor(Date.now() / 1000))
     .first();
+}
+
+async function login(request, env) {
+  const ip = await checkLoginRate(env, request);
+  const { password } = await readJson(request);
+  const user = await userFromPassword(env, password);
+  if (!user) {
+    await recordLoginFail(env, ip);
+    throw new HttpError(401, "That password isn't right.");
+  }
+  const token = randomToken();
+  const tokenHash = await hmac(env.SESSION_SECRET, 'sess:' + token);
+  const nowSec = Math.floor(Date.now() / 1000);
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(tokenHash, user.id, nowSec + SESSION_SECONDS),
+    env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(nowSec),
+  ]);
+  return json({ me: { name: user.name, role: user.role } }, 200, { 'set-cookie': sessionCookie(token, SESSION_SECONDS) });
+}
+
+// ---------- operations (the website API and MCP both call these) ----------
+// Every function checks what `user` is allowed to do, so the rules live in one place.
+
+function needAdmin(user) {
+  if (user.role !== 'admin') throw new HttpError(403, 'Admins only');
 }
 
 // Projects this user may see, each with the level they hold on it.
@@ -189,55 +136,7 @@ async function levelOn(db, user, projectId) {
   return projects.find((p) => p.id === projectId)?.level ?? null;
 }
 
-async function login(request, env) {
-  const ip = request.headers.get('CF-Connecting-IP') || 'local';
-  const now = Date.now();
-  const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM login_fails WHERE ip = ? AND ts > ?').bind(ip, now - FAIL_WINDOW_MS).first();
-  if (recent.n >= MAX_FAILS) throw new HttpError(429, 'Too many wrong attempts. Try again in 15 minutes.');
-
-  const { password } = await readJson(request);
-  if (typeof password !== 'string' || password.length < MIN_PASSWORD || password.length > 200) {
-    throw bad(`Passwords are at least ${MIN_PASSWORD} characters.`);
-  }
-
-  const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
-  const adminKey = await hmac(env.SESSION_SECRET, 'pw:' + env.ADMIN_PASSWORD);
-  let user;
-  if (safeEqual(key, adminKey)) {
-    const adminName = (env.ADMIN_NAME || 'Admin').slice(0, 40);
-    user = await env.DB.prepare("SELECT id, name, role FROM users WHERE role = 'admin' LIMIT 1").first();
-    if (!user) {
-      const r = await env.DB.prepare("INSERT INTO users (name, role, pw_key) VALUES (?, 'admin', '__admin__')").bind(adminName).run();
-      user = { id: r.meta.last_row_id, name: adminName, role: 'admin' };
-    } else if (user.name !== adminName) {
-      await env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(adminName, user.id).run();
-      user.name = adminName;
-    }
-  } else {
-    user = await env.DB.prepare('SELECT id, name, role FROM users WHERE pw_key = ? AND role != ?').bind(key, 'admin').first();
-  }
-
-  if (!user) {
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO login_fails (ip, ts) VALUES (?, ?)').bind(ip, now),
-      env.DB.prepare('DELETE FROM login_fails WHERE ts < ?').bind(now - 24 * 3600 * 1000),
-    ]);
-    throw new HttpError(401, "That password isn't right.");
-  }
-
-  const token = randomToken();
-  const tokenHash = await hmac(env.SESSION_SECRET, 'sess:' + token);
-  const nowSec = Math.floor(now / 1000);
-  await env.DB.batch([
-    env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(tokenHash, user.id, nowSec + SESSION_SECONDS),
-    env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(nowSec),
-  ]);
-  return json({ me: { name: user.name, role: user.role } }, 200, { 'set-cookie': sessionCookie(token, SESSION_SECONDS) });
-}
-
-// ---------- routes ----------
-
-async function getState(env, user) {
+export async function getState(env, user) {
   const projects = await projectsFor(env.DB, user);
   let events;
   if (user.role === 'editor') {
@@ -254,7 +153,44 @@ async function getState(env, user) {
   return { me: { name: user.name, role: user.role }, projects, events };
 }
 
-async function saveEvent(env, user, id, input) {
+export async function getProject(env, user, id) {
+  const p = (await projectsFor(env.DB, user)).find((x) => x.id === id);
+  if (!p) throw new HttpError(404, 'Not found');
+  return p;
+}
+
+// Same answer whether it doesn't exist or you can't see it, so ids can't be probed.
+async function loadEvent(env, user, id, { edit = false } = {}) {
+  const existing = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
+  const level = existing ? await levelOn(env.DB, user, existing.project_id) : null;
+  if (!level) throw new HttpError(404, 'Not found');
+  if (edit && level !== 'edit') throw new HttpError(403, "You can't edit that project.");
+  return existing;
+}
+
+export async function getEvent(env, user, id) {
+  return loadEvent(env, user, id);
+}
+
+export async function listEvents(env, user, { project_id, from, to, status, q, limit = 200 } = {}) {
+  const state = await getState(env, user);
+  const names = new Map(state.projects.map((p) => [p.id, p.name]));
+  const needle = typeof q === 'string' ? q.trim().toLowerCase() : '';
+  const matches = state.events.filter(
+    (e) =>
+      (project_id == null || e.project_id === project_id) &&
+      (!from || e.end_date >= from) &&
+      (!to || e.start_date <= to) &&
+      (!status || e.status === status) &&
+      (!needle || (e.title + ' ' + e.notes).toLowerCase().includes(needle))
+  );
+  limit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const events = matches.slice(0, limit).map((e) => ({ ...e, project: names.get(e.project_id) }));
+  return { total: matches.length, returned: events.length, events };
+}
+
+export async function saveEvent(env, user, id, input) {
+  if (user.role === 'guest') throw new HttpError(403, 'Guests can only look.');
   const e = cleanEvent(input);
   if ((await levelOn(env.DB, user, e.project_id)) !== 'edit') throw new HttpError(403, "You can't edit that project.");
   const cols = [e.project_id, e.title, e.notes, e.start_date, e.end_date, e.start_time, e.end_time, e.status, user.name];
@@ -273,12 +209,124 @@ async function saveEvent(env, user, id, input) {
       .bind(...cols, id)
       .run();
   }
-  return json({ event: await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first() });
+  return env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
 }
 
-function newUserResponse(user, password) {
-  return json({ user: { ...user, access: [] }, password });
+export async function updateEvent(env, user, id, changes) {
+  const existing = await loadEvent(env, user, id, { edit: true });
+  return saveEvent(env, user, id, { ...existing, ...changes });
 }
+
+export async function moveEvent(env, user, id, days) {
+  if (!Number.isInteger(days) || Math.abs(days) > 3650) throw bad('days must be a whole number (negative moves earlier)');
+  const existing = await loadEvent(env, user, id, { edit: true });
+  return saveEvent(env, user, id, { ...existing, start_date: shiftDate(existing.start_date, days), end_date: shiftDate(existing.end_date, days) });
+}
+
+export async function deleteEvent(env, user, id) {
+  await loadEvent(env, user, id, { edit: true });
+  await env.DB.prepare('DELETE FROM events WHERE id = ?').bind(id).run();
+  return { ok: true, deleted: id };
+}
+
+export async function createProject(env, user, input) {
+  needAdmin(user);
+  const p = cleanProject(input);
+  const r = await env.DB.prepare('INSERT INTO projects (name, color, pattern) VALUES (?,?,?)').bind(p.name, p.color, p.pattern).run();
+  return { id: r.meta.last_row_id, ...p, level: 'edit' };
+}
+
+export async function updateProject(env, user, id, changes) {
+  needAdmin(user);
+  const existing = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  if (!existing) throw new HttpError(404, 'Not found');
+  const p = cleanProject({ ...existing, ...changes });
+  await env.DB.prepare('UPDATE projects SET name=?, color=?, pattern=? WHERE id=?').bind(p.name, p.color, p.pattern, id).run();
+  return { id, ...p, level: 'edit' };
+}
+
+export async function deleteProject(env, user, id) {
+  needAdmin(user);
+  const existing = await env.DB.prepare('SELECT 1 x FROM projects WHERE id = ?').bind(id).first();
+  if (!existing) throw new HttpError(404, 'Not found');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM events WHERE project_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM project_access WHERE project_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id),
+  ]);
+  return { ok: true, deleted: id };
+}
+
+export async function listUsers(env, user) {
+  needAdmin(user);
+  const users = (await env.DB.prepare("SELECT id, name, role FROM users WHERE role != 'admin' ORDER BY name COLLATE NOCASE").all()).results;
+  const access = (await env.DB.prepare('SELECT user_id, project_id, level FROM project_access').all()).results;
+  return users.map((u) => ({ ...u, access: access.filter((a) => a.user_id === u.id).map(({ project_id, level }) => ({ project_id, level })) }));
+}
+
+export async function getUser(env, user, id) {
+  const u = (await listUsers(env, user)).find((x) => x.id === id);
+  if (!u) throw new HttpError(404, 'Not found');
+  return u;
+}
+
+export async function createUser(env, user, body) {
+  needAdmin(user);
+  const name = cleanText(body.name, 'Name', 40, { required: true });
+  if (!['editor', 'guest'].includes(body.role)) throw bad('Role must be editor or guest');
+  const password = generatePassword();
+  const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
+  const r = await env.DB.prepare('INSERT INTO users (name, role, pw_key) VALUES (?,?,?)').bind(name, body.role, key).run();
+  return { user: { id: r.meta.last_row_id, name, role: body.role, access: [] }, password };
+}
+
+export async function updateUser(env, user, id, body) {
+  const target = await getUser(env, user, id);
+  const stmts = [];
+  if (body.name !== undefined) stmts.push(env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(cleanText(body.name, 'Name', 40, { required: true }), id));
+  if (body.access !== undefined) {
+    if (target.role !== 'editor') throw bad('Only editors have per-project access');
+    if (!Array.isArray(body.access)) throw bad('access must be a list');
+    const seen = new Set();
+    stmts.push(env.DB.prepare('DELETE FROM project_access WHERE user_id = ?').bind(id));
+    for (const a of body.access) {
+      if (!Number.isInteger(a?.project_id) || !['edit', 'view'].includes(a.level) || seen.has(a.project_id)) throw bad('Bad access entry');
+      seen.add(a.project_id);
+      stmts.push(env.DB.prepare('INSERT INTO project_access (user_id, project_id, level) VALUES (?,?,?)').bind(id, a.project_id, a.level));
+    }
+  }
+  if (stmts.length) {
+    try {
+      await env.DB.batch(stmts);
+    } catch {
+      throw bad('One of those projects no longer exists');
+    }
+  }
+  return getUser(env, user, id);
+}
+
+export async function resetPassword(env, user, id) {
+  await getUser(env, user, id);
+  const password = generatePassword();
+  const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET pw_key = ? WHERE id = ?').bind(key, id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), // old password's logins end now
+  ]);
+  return { password };
+}
+
+export async function deleteUser(env, user, id) {
+  await getUser(env, user, id);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM project_access WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
+  ]);
+  return { ok: true, deleted: id };
+}
+
+// ---------- website API ----------
 
 async function handleApi(request, env, url) {
   const method = request.method;
@@ -308,113 +356,33 @@ async function handleApi(request, env, url) {
   if (path === '/api/state' && method === 'GET') return json(await getState(env, user));
 
   // ----- events (anyone with edit access to the project) -----
-  if (path === '/api/events' && method === 'POST') {
-    if (user.role === 'guest') throw new HttpError(403, 'Guests can only look.');
-    return saveEvent(env, user, null, await readJson(request));
-  }
+  if (path === '/api/events' && method === 'POST') return json({ event: await saveEvent(env, user, null, await readJson(request)) });
   let m = path.match(/^\/api\/events\/(\d+)$/);
   if (m) {
     const id = Number(m[1]);
-    const existing = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
-    // Same answer whether it doesn't exist or you can't see it, so ids can't be probed.
-    if (!existing || !(await levelOn(env.DB, user, existing.project_id))) throw new HttpError(404, 'Not found');
-    if ((await levelOn(env.DB, user, existing.project_id)) !== 'edit') throw new HttpError(403, "You can't edit that project.");
-    if (method === 'PATCH') return saveEvent(env, user, id, { ...existing, ...(await readJson(request)) });
-    if (method === 'DELETE') {
-      await env.DB.prepare('DELETE FROM events WHERE id = ?').bind(id).run();
-      return json({ ok: true });
-    }
+    if (method === 'PATCH') return json({ event: await updateEvent(env, user, id, await readJson(request)) });
+    if (method === 'DELETE') return json(await deleteEvent(env, user, id));
   }
 
   // ----- admin only -----
   if (user.role !== 'admin' && /^\/api\/(projects|users)/.test(path)) throw new HttpError(403, 'Admins only');
 
-  if (path === '/api/projects' && method === 'POST') {
-    const p = cleanProject(await readJson(request));
-    const r = await env.DB.prepare('INSERT INTO projects (name, color, pattern) VALUES (?,?,?)').bind(p.name, p.color, p.pattern).run();
-    return json({ project: { id: r.meta.last_row_id, ...p, level: 'edit' } });
-  }
+  if (path === '/api/projects' && method === 'POST') return json({ project: await createProject(env, user, await readJson(request)) });
   m = path.match(/^\/api\/projects\/(\d+)$/);
   if (m) {
     const id = Number(m[1]);
-    if (method === 'PATCH') {
-      const existing = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
-      if (!existing) throw new HttpError(404, 'Not found');
-      const p = cleanProject({ ...existing, ...(await readJson(request)) });
-      await env.DB.prepare('UPDATE projects SET name=?, color=?, pattern=? WHERE id=?').bind(p.name, p.color, p.pattern, id).run();
-      return json({ project: { id, ...p, level: 'edit' } });
-    }
-    if (method === 'DELETE') {
-      await env.DB.batch([
-        env.DB.prepare('DELETE FROM events WHERE project_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM project_access WHERE project_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id),
-      ]);
-      return json({ ok: true });
-    }
+    if (method === 'PATCH') return json({ project: await updateProject(env, user, id, await readJson(request)) });
+    if (method === 'DELETE') return json(await deleteProject(env, user, id));
   }
 
-  if (path === '/api/users' && method === 'GET') {
-    const users = (await env.DB.prepare("SELECT id, name, role FROM users WHERE role != 'admin' ORDER BY name COLLATE NOCASE").all()).results;
-    const access = (await env.DB.prepare('SELECT user_id, project_id, level FROM project_access').all()).results;
-    return json({ users: users.map((u) => ({ ...u, access: access.filter((a) => a.user_id === u.id).map(({ project_id, level }) => ({ project_id, level })) })) });
-  }
-  if (path === '/api/users' && method === 'POST') {
-    const body = await readJson(request);
-    const name = cleanText(body.name, 'Name', 40, { required: true });
-    if (!['editor', 'guest'].includes(body.role)) throw bad('Role must be editor or guest');
-    const password = generatePassword();
-    const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
-    const r = await env.DB.prepare('INSERT INTO users (name, role, pw_key) VALUES (?,?,?)').bind(name, body.role, key).run();
-    return newUserResponse({ id: r.meta.last_row_id, name, role: body.role }, password);
-  }
+  if (path === '/api/users' && method === 'GET') return json({ users: await listUsers(env, user) });
+  if (path === '/api/users' && method === 'POST') return json(await createUser(env, user, await readJson(request)));
   m = path.match(/^\/api\/users\/(\d+)(\/reset-password)?$/);
   if (m) {
     const id = Number(m[1]);
-    const target = await env.DB.prepare("SELECT id, name, role FROM users WHERE id = ? AND role != 'admin'").bind(id).first();
-    if (!target) throw new HttpError(404, 'Not found');
-
-    if (m[2] && method === 'POST') {
-      const password = generatePassword();
-      const key = await hmac(env.SESSION_SECRET, 'pw:' + password);
-      await env.DB.batch([
-        env.DB.prepare('UPDATE users SET pw_key = ? WHERE id = ?').bind(key, id),
-        env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), // old password's logins end now
-      ]);
-      return json({ password });
-    }
-    if (method === 'PATCH') {
-      const body = await readJson(request);
-      const stmts = [];
-      if (body.name !== undefined) stmts.push(env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(cleanText(body.name, 'Name', 40, { required: true }), id));
-      if (body.access !== undefined) {
-        if (target.role !== 'editor') throw bad('Only editors have per-project access');
-        if (!Array.isArray(body.access)) throw bad('access must be a list');
-        const seen = new Set();
-        stmts.push(env.DB.prepare('DELETE FROM project_access WHERE user_id = ?').bind(id));
-        for (const a of body.access) {
-          if (!Number.isInteger(a.project_id) || !['edit', 'view'].includes(a.level) || seen.has(a.project_id)) throw bad('Bad access entry');
-          seen.add(a.project_id);
-          stmts.push(env.DB.prepare('INSERT INTO project_access (user_id, project_id, level) VALUES (?,?,?)').bind(id, a.project_id, a.level));
-        }
-      }
-      if (stmts.length) {
-        try {
-          await env.DB.batch(stmts);
-        } catch {
-          throw bad('One of those projects no longer exists');
-        }
-      }
-      return json({ ok: true });
-    }
-    if (method === 'DELETE') {
-      await env.DB.batch([
-        env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM project_access WHERE user_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
-      ]);
-      return json({ ok: true });
-    }
+    if (m[2] && method === 'POST') return json(await resetPassword(env, user, id));
+    if (method === 'PATCH') return json({ ok: true, user: await updateUser(env, user, id, await readJson(request)) });
+    if (method === 'DELETE') return json(await deleteUser(env, user, id));
   }
 
   throw new HttpError(404, 'Not found');
@@ -423,8 +391,20 @@ async function handleApi(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    const isApi = url.pathname.startsWith('/api/');
+    const isMcp = url.pathname === '/mcp';
+    if (!isApi && !isMcp) return env.ASSETS.fetch(request);
     try {
+      if (isMcp) {
+        requireConfig(env);
+        await ensureSchema(env.DB);
+        return await handleMcp(request, env, url, {
+          checkLoginRate, recordLoginFail, userFromPassword,
+          getState, getProject, getEvent, listEvents, saveEvent, updateEvent, moveEvent, deleteEvent,
+          createProject, updateProject, deleteProject,
+          listUsers, getUser, createUser, updateUser, resetPassword, deleteUser,
+        });
+      }
       return await handleApi(request, env, url);
     } catch (err) {
       if (err instanceof HttpError) return json({ error: err.message }, err.status);

@@ -7,7 +7,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:technical": "wrangler deploy -c wrangler.technical.jsonc",
-    "test": "node test/api.test.mjs"
+    "test": "node test/api.test.mjs && node test/mcp.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4"

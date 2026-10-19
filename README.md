@@ -31,6 +31,26 @@ The D1 database id is already in `wrangler.jsonc`. Deploying again later is just
 
 Changing `SESSION_SECRET` signs everyone out **and** invalidates every editor/guest password, so only do that on purpose.
 
+## MCP (let Claude or another AI agent use the calendar)
+
+Each calendar also speaks MCP at `/mcp`. Use the same passwords as the website: the password you send decides your role, so the AI can do exactly what that person can do, no more.
+
+```bash
+# Claude Code (one per calendar; the password goes in the header)
+claude mcp add --transport http deepjiwan https://deepjiwan.pentagontz.workers.dev/mcp \
+  --header "Authorization: Bearer YOUR_PASSWORD"
+```
+
+| Role | Tools |
+|---|---|
+| **Guest** (5) | `whoami`, `list_projects`, `get_project`, `list_events`, `get_event` |
+| **Editor** (9) | the above + `create_event`, `update_event`, `move_event`, `delete_event` (only in projects they can edit) |
+| **Admin** (18) | everything: + `create_project`, `update_project`, `delete_project`, `list_users`, `get_user`, `create_user`, `update_user`, `reset_user_password`, `delete_user` |
+
+Create / Read / Update / Delete is covered for projects, tasks and people. Deleting a project or a person needs `confirm: true`. `create_user` and `reset_user_password` return the new password once.
+
+Works with clients that let you set a header (Claude Code, Claude Desktop via config, Cursor, the MCP SDKs). The Claude.ai website's "custom connector" button needs OAuth, which this does not have.
+
 ## Two deployments from the same code
 
 | | Personal | Team |
@@ -47,7 +67,7 @@ Each has its own database, admin password and session secret, so nothing is shar
 ```bash
 cp .dev.vars.example .dev.vars   # edit the values
 npm run dev                      # http://127.0.0.1:8787
-npm test                         # API checks, with dev server running (set ADMIN_PASSWORD if you changed it)
+npm test                         # website API + MCP checks, with dev server running (set ADMIN_PASSWORD if you changed it)
 ```
 
 ## Security notes
