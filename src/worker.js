@@ -204,10 +204,14 @@ async function login(request, env) {
   const adminKey = await hmac(env.SESSION_SECRET, 'pw:' + env.ADMIN_PASSWORD);
   let user;
   if (safeEqual(key, adminKey)) {
+    const adminName = (env.ADMIN_NAME || 'Admin').slice(0, 40);
     user = await env.DB.prepare("SELECT id, name, role FROM users WHERE role = 'admin' LIMIT 1").first();
     if (!user) {
-      const r = await env.DB.prepare("INSERT INTO users (name, role, pw_key) VALUES ('Admin', 'admin', '__admin__')").run();
-      user = { id: r.meta.last_row_id, name: 'Admin', role: 'admin' };
+      const r = await env.DB.prepare("INSERT INTO users (name, role, pw_key) VALUES (?, 'admin', '__admin__')").bind(adminName).run();
+      user = { id: r.meta.last_row_id, name: adminName, role: 'admin' };
+    } else if (user.name !== adminName) {
+      await env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(adminName, user.id).run();
+      user.name = adminName;
     }
   } else {
     user = await env.DB.prepare('SELECT id, name, role FROM users WHERE pw_key = ? AND role != ?').bind(key, 'admin').first();

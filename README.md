@@ -8,7 +8,7 @@ You open the link and type a password (15+ characters). The password decides wha
 
 | Who | Password comes from | Sees | Can change |
 |---|---|---|---|
-| **Admin** | `ADMIN_PASSWORD` secret on the server | everything | everything, plus projects and people |
+| **Admin** (shown as the `ADMIN_NAME` in `wrangler.jsonc`) | `ADMIN_PASSWORD` secret on the server | everything | everything, plus projects and people |
 | **Editor** | created by the admin (random, 20 chars, shown once) | only projects the admin gave them | tasks in projects with **Can edit**; projects with **Can view** are read only; others are hidden completely |
 | **Guest** | created by the admin | every project | nothing |
 
@@ -20,7 +20,7 @@ Each project has a colour **and** a pattern (stripes, dots, checks...) so it sti
 
 ```bash
 npm install
-export CLOUDFLARE_API_TOKEN=...        # token with "Edit Cloudflare Workers" + "D1 Edit"
+export CLOUDFLARE_API_TOKEN=...        # "Edit Cloudflare Workers" template + Account > D1 > Edit
 npx wrangler deploy                    # creates tables on first request, no migration step
 # set the two secrets (it asks you to type them, nothing is stored in git):
 npx wrangler secret put ADMIN_PASSWORD   # your own password, 15+ characters
