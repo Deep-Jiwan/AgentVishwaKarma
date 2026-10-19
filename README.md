@@ -49,6 +49,8 @@ claude mcp add --transport http deepjiwan https://deepjiwan.pentagontz.workers.d
 
 Create / Read / Update / Delete is covered for projects, tasks and people. Deleting a project or a person needs `confirm: true`. `create_user` and `reset_user_password` return the new password once.
 
+This repo's `.mcp.json` already connects the team calendar for Claude Code sessions. It reads the password from the `TECHNICAL_CALENDAR_PASSWORD` environment variable, so no password is stored in git.
+
 Works with clients that let you set a header (Claude Code, Claude Desktop via config, Cursor, the MCP SDKs). The Claude.ai website's "custom connector" button needs OAuth, which this does not have.
 
 ## Two deployments from the same code
