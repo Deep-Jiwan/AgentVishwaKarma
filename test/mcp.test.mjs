@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8787';
 const ADMIN = process.env.ADMIN_PASSWORD || 'local-admin-pass-1234';
+// Cloudflare rejects requests that fake a CF-Connecting-IP header, so only send it to a local dev server.
+const LIVE = !!process.env.SKIP_LOCKOUT;
 const ok = (name) => console.log('  ok  ' + name);
 
 let nextId = 1;
 function mcp(password, ip) {
-  const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(password ? { authorization: 'Bearer ' + password } : {}), ...(ip ? { 'CF-Connecting-IP': ip } : {}) };
+  const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(password ? { authorization: 'Bearer ' + password } : {}), ...(ip && !LIVE ? { 'CF-Connecting-IP': ip } : {}) };
   const post = async (body) => {
     const res = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify(body) });
     const text = await res.text();

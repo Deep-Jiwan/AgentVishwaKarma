@@ -5,13 +5,15 @@ import { createHash, randomBytes } from 'node:crypto';
 const BASE = process.env.BASE || 'http://127.0.0.1:8787';
 const ADMIN = process.env.ADMIN_PASSWORD || 'local-admin-pass-1234';
 const CB = 'https://claude.ai/api/mcp/auth_callback';
+// Cloudflare rejects requests that fake a CF-Connecting-IP header, so only send it to a local dev server.
+const LIVE = !!process.env.SKIP_LOCKOUT;
 const ok = (n) => console.log('  ok  ' + n);
 const b64u = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const get = (path, init) => fetch(BASE + path, { redirect: 'manual', ...init });
 const form = (obj) => ({ method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(obj).toString() });
 const rpc = async (token, method, params, ip) => {
-  const res = await fetch(BASE + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(ip ? { 'CF-Connecting-IP': ip } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const res = await fetch(BASE + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(ip && !LIVE ? { 'CF-Connecting-IP': ip } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
   const t = await res.text();
   return { status: res.status, body: t ? JSON.parse(t) : null, headers: res.headers };
 };
@@ -31,7 +33,7 @@ async function getCode(clientId, password, ip) {
   const q = authQuery(clientId, challenge);
   const page = await get('/authorize?' + q);
   assert.equal(page.status, 200);
-  const res = await get('/authorize', { ...form({ ...Object.fromEntries(q), password }), headers: { 'content-type': 'application/x-www-form-urlencoded', ...(ip ? { 'CF-Connecting-IP': ip } : {}) } });
+  const res = await get('/authorize', { ...form({ ...Object.fromEntries(q), password }), headers: { 'content-type': 'application/x-www-form-urlencoded', ...(ip && !LIVE ? { 'CF-Connecting-IP': ip } : {}) } });
   return { res, verifier, q };
 }
 async function tokens(clientId, code, verifier, redirect = CB) {

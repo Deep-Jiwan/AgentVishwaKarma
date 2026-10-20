@@ -10,7 +10,7 @@ function client() {
   return async (path, { method = 'GET', body, ip } = {}) => {
     const res = await fetch(BASE + '/api' + path, {
       method,
-      headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(cookie ? { cookie } : {}), ...(ip ? { 'CF-Connecting-IP': ip } : {}) },
+      headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(cookie ? { cookie } : {}), ...(ip && !LIVE ? { 'CF-Connecting-IP': ip } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     const set = res.headers.get('set-cookie');
@@ -19,6 +19,7 @@ function client() {
   };
 }
 
+const LIVE = !!process.env.SKIP_LOCKOUT;
 const ok = (name) => console.log('  ok  ' + name);
 
 const anon = client();
