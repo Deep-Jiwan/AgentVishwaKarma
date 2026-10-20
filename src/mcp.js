@@ -3,6 +3,7 @@
 // Which tools you see, and what they may touch, depends on that password's role.
 
 import { HttpError, bad, json, isDate, STATUSES, COLORS, PATTERNS } from './core.js';
+import { resourceMetadataUrl } from './oauth.js';
 
 const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const INSTRUCTIONS =
@@ -253,15 +254,22 @@ export async function handleMcp(request, env, url, ops) {
   const bearer = (request.headers.get('authorization') || '').match(/^Bearer\s+(.+)$/i);
   let user = null;
   if (bearer) {
-    try {
-      user = await ops.userFromPassword(env, bearer[1].trim());
-    } catch (err) {
-      if (!(err instanceof HttpError)) throw err; // a too-short password is just a wrong password
+    const secret = bearer[1].trim();
+    if (secret.startsWith('vkat_')) {
+      user = await ops.userFromAccessToken(env, secret); // OAuth access token (Claude's website connector etc.)
+    } else {
+      try {
+        user = await ops.userFromPassword(env, secret); // the calendar password itself, sent as a header
+      } catch (err) {
+        if (!(err instanceof HttpError)) throw err; // a too-short password is just a wrong password
+      }
+      if (!user) await ops.recordLoginFail(env, ip);
     }
-    if (!user) await ops.recordLoginFail(env, ip);
   }
   if (!user) {
-    return json({ error: 'Send your calendar password as "Authorization: Bearer <password>".' }, 401, { 'www-authenticate': 'Bearer realm="calendar"' });
+    return json({ error: 'Sign in with OAuth, or send your calendar password as "Authorization: Bearer <password>".' }, 401, {
+      'www-authenticate': `Bearer realm="calendar", resource_metadata="${resourceMetadataUrl(url)}"`,
+    });
   }
 
   let body;

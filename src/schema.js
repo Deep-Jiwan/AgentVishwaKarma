@@ -45,4 +45,28 @@ export const SCHEMA = [
     ts INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS login_fails_ip ON login_fails(ip, ts)`,
+  // OAuth, so Claude's website connector (and other OAuth-only clients) can sign in with a calendar password.
+  `CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id TEXT PRIMARY KEY,
+    client_name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    cred TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('access','refresh')),
+    client_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cred TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
 ];

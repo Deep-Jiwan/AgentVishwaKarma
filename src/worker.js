@@ -1,5 +1,6 @@
 import { SCHEMA } from './schema.js';
 import { handleMcp } from './mcp.js';
+import { handleOAuth, OAUTH_PATHS, userFromAccessToken } from './oauth.js';
 import {
   HttpError, bad, json, readJson, hmac, safeEqual, randomToken, generatePassword,
   cleanText, cleanEvent, cleanProject, shiftDate,
@@ -393,17 +394,19 @@ export default {
     const url = new URL(request.url);
     const isApi = url.pathname.startsWith('/api/');
     const isMcp = url.pathname === '/mcp';
-    if (!isApi && !isMcp) return env.ASSETS.fetch(request);
+    const isOauth = OAUTH_PATHS.has(url.pathname);
+    if (!isApi && !isMcp && !isOauth) return env.ASSETS.fetch(request);
     try {
-      if (isMcp) {
+      if (isMcp || isOauth) {
         requireConfig(env);
         await ensureSchema(env.DB);
-        return await handleMcp(request, env, url, {
-          checkLoginRate, recordLoginFail, userFromPassword,
+        const ops = {
+          checkLoginRate, recordLoginFail, userFromPassword, userFromAccessToken,
           getState, getProject, getEvent, listEvents, saveEvent, updateEvent, moveEvent, deleteEvent,
           createProject, updateProject, deleteProject,
           listUsers, getUser, createUser, updateUser, resetPassword, deleteUser,
-        });
+        };
+        return isMcp ? await handleMcp(request, env, url, ops) : await handleOAuth(request, env, url, ops);
       }
       return await handleApi(request, env, url);
     } catch (err) {

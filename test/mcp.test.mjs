@@ -125,9 +125,11 @@ for (const p of [pA, pB, pC]) assert.equal((await admin.call('delete_project', {
 assert.equal((await admin.call('get_event', { id: eC.id })).error, 'Not found'); ok('delete_project removes its tasks');
 assert.equal((await mcp(gu.password, '9.9.8.3').rpc('tools/list')).status, 401); ok('deleted user is locked out');
 
+if (!process.env.SKIP_LOCKOUT) { // skip against a live site: it would lock out your own IP for 15 minutes
 // --- brute force on /mcp ---
 let last;
 for (let i = 0; i < 9; i++) last = await mcp('q'.repeat(20) + i, '9.9.8.4').rpc('tools/list');
 assert.equal(last.status, 429); ok('brute force on /mcp is locked out');
+}
 
 console.log('\nAll MCP checks passed.');

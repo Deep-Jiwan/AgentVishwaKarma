@@ -51,7 +51,13 @@ Create / Read / Update / Delete is covered for projects, tasks and people. Delet
 
 This repo's `.mcp.json` already connects the team calendar for Claude Code sessions. It reads the password from the `TECHNICAL_CALENDAR_PASSWORD` environment variable, so no password is stored in git.
 
-Works with clients that let you set a header (Claude Code, Claude Desktop via config, Cursor, the MCP SDKs). The Claude.ai website's "custom connector" button needs OAuth, which this does not have.
+### Claude.ai website ("custom connector")
+
+Settings -> Connectors -> Add custom connector -> paste `https://<your-calendar>/mcp` -> Connect. A page from your own calendar opens: type a calendar password and press **Allow access**. The role of that password is the role Claude gets. (To switch role, remove the connector and add it again with another password.)
+
+Under the hood the Worker is a small OAuth 2.1 server (discovery, dynamic client registration, authorization code + PKCE, rotating refresh tokens). Tokens stop working as soon as that person's password is reset, they are removed, or `ADMIN_PASSWORD` changes.
+
+Clients that can send a header (Claude Code, Cursor, the MCP SDKs) can instead use the password directly as shown above.
 
 ## Two deployments from the same code
 
